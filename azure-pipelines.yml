@@ -1,0 +1,251 @@
+# ============================================================
+# Pipeline CI - gestion-signalement
+# Déclenchement : push sur main, develop, feature/*, release/*
+# ============================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - feature/*
+      - release/*
+  paths:
+    exclude:
+      - '**/*.md'
+      - 'docs/**'
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  # ---- Maven ------------------------------------------------
+  MAVEN_OPTS: '-Xmx1024m'
+  # ---- Docker / ACR ----------------------------------------
+  # À remplacer par vos valeurs Azure Container Registry
+  ACR_NAME: 'acrgestionSignalement'            # nom ACR (sans .azurecr.io)
+  IMAGE_NAME: 'gestion-signalement'
+  IMAGE_TAG: '$(Build.BuildId)'
+  # ---- SonarCloud ------------------------------------------
+  # Configurer les secrets dans le groupe de variables "sonar-config"
+  # SONAR_TOKEN, SONAR_ORGANIZATION, SONAR_PROJECT_KEY
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+
+  # ============================================================
+  # STAGE 1 : BUILD & TESTS
+  # ============================================================
+  - stage: Build
+    displayName: 'Build & Tests'
+    jobs:
+      - job: MavenBuild
+        displayName: 'Compilation Maven + Tests unitaires'
+        steps:
+
+          - task: JavaToolInstaller@0
+            displayName: 'Installer JDK 8'
+            inputs:
+              versionSpec: '8'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+
+          - task: Cache@2
+            displayName: 'Cache dépendances Maven'
+            inputs:
+              key: 'maven | "$(Agent.OS)" | **/pom.xml'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+                maven
+              path: '$(HOME)/.m2/repository'
+
+          - task: Maven@3
+            displayName: 'mvn clean verify (build + tests + JaCoCo)'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean verify'
+              options: '-Dmaven.test.failure.ignore=false'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8'
+              mavenVersionOption: 'Default'
+              mavenAuthenticateFeed: false
+
+          - task: PublishCodeCoverageResults@1
+            displayName: 'Publier couverture JaCoCo'
+            inputs:
+              codeCoverageTool: 'JaCoCo'
+              summaryFileLocation: '**/target/site/jacoco/jacoco.xml'
+              reportDirectory: '**/target/site/jacoco'
+              failIfCoverageEmpty: false
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publier JAR'
+            inputs:
+              PathtoPublish: 'target/gestion-signalement.jar'
+              ArtifactName: 'jar-artifact'
+              publishLocation: 'Container'
+
+  # ============================================================
+  # STAGE 2 : ANALYSE DE CODE STATIQUE
+  # ============================================================
+  - stage: CodeAnalysis
+    displayName: 'Analyse de code statique'
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+
+      # --- Checkstyle + SpotBugs via Maven --------------------
+      - job: StaticAnalysis
+        displayName: 'Checkstyle & SpotBugs'
+        steps:
+
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '8'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+
+          - task: Cache@2
+            inputs:
+              key: 'maven | "$(Agent.OS)" | **/pom.xml'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+                maven
+              path: '$(HOME)/.m2/repository'
+
+          - task: Maven@3
+            displayName: 'Checkstyle'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'checkstyle:checkstyle'
+              publishJUnitResults: false
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8'
+
+          - task: Maven@3
+            displayName: 'SpotBugs'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'spotbugs:spotbugs'
+              publishJUnitResults: false
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8'
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publier rapports SpotBugs'
+            inputs:
+              PathtoPublish: 'target/spotbugs'
+              ArtifactName: 'spotbugs-report'
+              publishLocation: 'Container'
+
+      # --- SonarCloud -----------------------------------------
+      - job: SonarCloud
+        displayName: 'Analyse SonarCloud'
+        variables:
+          - group: sonar-config   # Groupe de variables contenant SONAR_TOKEN
+        steps:
+
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '8'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+
+          - task: Cache@2
+            inputs:
+              key: 'maven | "$(Agent.OS)" | **/pom.xml'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+                maven
+              path: '$(HOME)/.m2/repository'
+
+          - task: SonarCloudPrepare@1
+            displayName: 'Préparer SonarCloud'
+            inputs:
+              SonarCloud: 'SonarCloudConnection'   # Connexion de service à créer dans Azure DevOps
+              organization: '$(SONAR_ORGANIZATION)'
+              scannerMode: 'Other'
+              projectKey: '$(SONAR_PROJECT_KEY)'
+              projectName: 'gestion-signalement'
+
+          - task: Maven@3
+            displayName: 'Build + SonarCloud analyse'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'verify sonar:sonar'
+              options: >
+                -Dsonar.projectKey=$(SONAR_PROJECT_KEY)
+                -Dsonar.organization=$(SONAR_ORGANIZATION)
+                -Dsonar.host.url=https://sonarcloud.io
+                -Dsonar.login=$(SONAR_TOKEN)
+                -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+              publishJUnitResults: false
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8'
+
+          - task: SonarCloudPublish@1
+            displayName: 'Publier résultats SonarCloud'
+            inputs:
+              pollingTimeoutSec: '300'
+
+  # ============================================================
+  # STAGE 3 : BUILD IMAGE DOCKER & PUSH ACR
+  #   Uniquement sur main ou develop
+  # ============================================================
+  - stage: DockerBuild
+    displayName: 'Build & Push Image Docker'
+    dependsOn: CodeAnalysis
+    condition: |
+      and(
+        succeeded(),
+        or(
+          eq(variables['Build.SourceBranch'], 'refs/heads/main'),
+          eq(variables['Build.SourceBranch'], 'refs/heads/develop')
+        )
+      )
+    jobs:
+      - job: Docker
+        displayName: 'Build Docker et push vers ACR'
+        steps:
+
+          - task: JavaToolInstaller@0
+            inputs:
+              versionSpec: '8'
+              jdkArchitectureOption: 'x64'
+              jdkSourceOption: 'PreInstalled'
+
+          - task: Cache@2
+            inputs:
+              key: 'maven | "$(Agent.OS)" | **/pom.xml'
+              restoreKeys: |
+                maven | "$(Agent.OS)"
+                maven
+              path: '$(HOME)/.m2/repository'
+
+          - task: Maven@3
+            displayName: 'Package JAR (skip tests)'
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'package'
+              options: '-DskipTests'
+              javaHomeOption: 'JDKVersion'
+              jdkVersionOption: '1.8'
+
+          - task: Docker@2
+            displayName: 'Build & Push image vers ACR'
+            inputs:
+              containerRegistry: 'ACRServiceConnection'   # Connexion de service ACR dans Azure DevOps
+              repository: '$(IMAGE_NAME)'
+              command: 'buildAndPush'
+              Dockerfile: 'Dockerfile'
+              buildContext: '.'
+              tags: |
+                $(IMAGE_TAG)
+                latest

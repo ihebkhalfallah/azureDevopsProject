@@ -1,0 +1,88 @@
+#
+# Project specific excludes
+#
+
+tomcat
+
+#
+# Default excludes
+#
+
+# Binaries
+*.7z
+*.dmg
+*.gz
+*.iso
+*.jar
+*.rar
+*.tar
+*.zip
+*.war
+*.ear
+*.sar
+*.class
+*.metadata
+*.recommenders
+
+# Maven 
+target/
+
+# IntelliJ project files 
+*.iml
+*.iws
+*.ipr
+.idea/
+
+# eclipse project file
+.settings/
+.classpath
+.project
+.target
+
+# NetBeans specific
+nbproject/private/
+build/
+nbbuild/
+dist/
+nbdist/
+nbactions.xml
+nb-configuration.xml
+
+
+# OS
+.DS_Store
+
+# Misc
+*.swp
+release.properties
+pom.xml.releaseBackup
+pom.xml.tag
+
+/catalina.policy
+/web.xml
+/tomcat-users.xml
+/server.xml
+/context.xml
+/catalina.properties
+
+# ========== Logs ==========
+*.log
+logs/
+
+# ========== VS Code ==========
+.vscode/
+
+# ========== Docker (overrides locaux) ==========
+docker-compose.override.yml
+
+# ========== Secrets / Config locaux ==========
+application-local.properties
+application-local.yml
+*.env
+.env
+secrets/
+
+# ========== Rapports d'analyse ==========
+target/site/
+target/spotbugs/
+target/checkstyle-result.xml
