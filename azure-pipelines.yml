@@ -150,7 +150,8 @@ stages:
             displayName: 'SpotBugs'
             inputs:
               mavenPomFile: 'pom.xml'
-              goals: 'spotbugs:spotbugs'
+              goals: 'compile spotbugs:spotbugs'
+              options: '-DskipTests'
               publishJUnitResults: false
               javaHomeOption: 'JDKVersion'
               jdkVersionOption: '1.8'
@@ -189,6 +190,7 @@ stages:
               mavenPomFile: 'pom.xml'
               goals: 'verify sonar:sonar'
               options: >
+                -DskipTests
                 -Dsonar.projectKey=$(SONAR_PROJECT_KEY)
                 -Dsonar.projectName=gestion-signalement
                 -Dsonar.projectVersion=$(Build.BuildNumber)
