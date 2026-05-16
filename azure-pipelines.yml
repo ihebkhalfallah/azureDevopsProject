@@ -63,14 +63,12 @@ stages:
               --health-retries=10
               --health-start-period=30s
         steps:
-
           - task: JavaToolInstaller@0
             displayName: 'Installer JDK 8'
             inputs:
               versionSpec: '8'
               jdkArchitectureOption: 'x64'
               jdkSourceOption: 'PreInstalled'
-
           - task: Cache@2
             displayName: 'Cache dépendances Maven'
             inputs:
@@ -79,7 +77,6 @@ stages:
                 maven | "$(Agent.OS)"
                 maven
               path: '$(HOME)/.m2/repository'
-
           - task: Maven@3
             displayName: 'mvn clean verify (build + tests + JaCoCo)'
             inputs:
@@ -98,7 +95,6 @@ stages:
               SPRING_DATASOURCE_USERNAME: 'admin'
               SPRING_DATASOURCE_PASSWORD: 'admin123'
               SPRING_JPA_HIBERNATE_DDL_AUTO: 'create'
-
           - task: PublishCodeCoverageResults@1
             displayName: 'Publier couverture JaCoCo'
             inputs:
@@ -106,7 +102,6 @@ stages:
               summaryFileLocation: '**/target/site/jacoco/jacoco.xml'
               reportDirectory: '**/target/site/jacoco'
               failIfCoverageEmpty: false
-
           - task: PublishBuildArtifacts@1
             displayName: 'Publier JAR'
             inputs:
