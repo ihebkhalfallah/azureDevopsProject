@@ -17,8 +17,9 @@ resources:
             - develop
 
 variables:
-  # ---- Azure Container Registry ----------------------------
-  ACR_NAME: 'acrgestionSignalement'
+  # ---- Docker Hub ------------------------------------------
+  # DOCKERHUB_USERNAME défini dans le groupe de variables "dockerhub-config"
+  DOCKERHUB_REPOSITORY: '$(DOCKERHUB_USERNAME)/gestion-signalement'
   IMAGE_NAME: 'gestion-signalement'
   # ---- Azure App Service -----------------------------------
   AZURE_SUBSCRIPTION: 'AzureServiceConnection'  # Connexion de service Azure à créer
@@ -51,7 +52,7 @@ stages:
                   inputs:
                     azureSubscription: '$(AZURE_SUBSCRIPTION)'
                     appName: '$(APP_SERVICE_NAME_STAGING)'
-                    containers: '$(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG)'
+                    containers: 'docker.io/$(DOCKERHUB_REPOSITORY):$(IMAGE_TAG)'
                     appSettings: |
                       -SPRING_DATASOURCE_URL "$(SPRING_DATASOURCE_URL_STAGING)"
                       -SPRING_DATASOURCE_USERNAME "$(DB_USER_STAGING)"
@@ -117,7 +118,7 @@ stages:
                     deployToSlotOrASE: true
                     resourceGroupName: '$(RESOURCE_GROUP)'
                     slotName: 'staging'
-                    containers: '$(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG)'
+                    containers: 'docker.io/$(DOCKERHUB_REPOSITORY):$(IMAGE_TAG)'
                     appSettings: |
                       -SPRING_DATASOURCE_URL "$(SPRING_DATASOURCE_URL_PROD)"
                       -SPRING_DATASOURCE_USERNAME "$(DB_USER_PROD)"

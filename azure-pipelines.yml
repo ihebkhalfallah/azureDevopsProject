@@ -24,14 +24,14 @@ pr:
 variables:
   # ---- Maven ------------------------------------------------
   MAVEN_OPTS: '-Xmx1024m'
-  # ---- Docker / ACR ----------------------------------------
-  # À remplacer par vos valeurs Azure Container Registry
-  ACR_NAME: 'acrgestionSignalement'            # nom ACR (sans .azurecr.io)
+  # ---- Docker Hub ------------------------------------------
+  # DOCKERHUB_USERNAME et DOCKERHUB_TOKEN à définir dans le groupe de variables "dockerhub-config"
+  DOCKERHUB_REPOSITORY: '$(DOCKERHUB_USERNAME)/gestion-signalement'
   IMAGE_NAME: 'gestion-signalement'
   IMAGE_TAG: '$(Build.BuildId)'
-  # ---- SonarCloud ------------------------------------------
+  # ---- SonarQube ------------------------------------------
   # Configurer les secrets dans le groupe de variables "sonar-config"
-  # SONAR_TOKEN, SONAR_ORGANIZATION, SONAR_PROJECT_KEY
+  # SONAR_TOKEN, SONAR_HOST_URL, SONAR_PROJECT_KEY
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -145,11 +145,11 @@ stages:
               ArtifactName: 'spotbugs-report'
               publishLocation: 'Container'
 
-      # --- SonarCloud -----------------------------------------
-      - job: SonarCloud
-        displayName: 'Analyse SonarCloud'
+      # --- SonarQube (via Maven, aucune extension marketplace requise) ---
+      - job: SonarQube
+        displayName: 'Analyse SonarQube'
         variables:
-          - group: sonar-config   # Groupe de variables contenant SONAR_TOKEN
+          - group: sonar-config   # Groupe de variables : SONAR_TOKEN, SONAR_HOST_URL, SONAR_PROJECT_KEY
         steps:
 
           - task: JavaToolInstaller@0
@@ -166,37 +166,25 @@ stages:
                 maven
               path: '$(HOME)/.m2/repository'
 
-          - task: SonarCloudPrepare@1
-            displayName: 'Préparer SonarCloud'
-            inputs:
-              SonarCloud: 'SonarCloudConnection'   # Connexion de service à créer dans Azure DevOps
-              organization: '$(SONAR_ORGANIZATION)'
-              scannerMode: 'Other'
-              projectKey: '$(SONAR_PROJECT_KEY)'
-              projectName: 'gestion-signalement'
-
           - task: Maven@3
-            displayName: 'Build + SonarCloud analyse'
+            displayName: 'Build + SonarQube analyse (Maven)'
             inputs:
               mavenPomFile: 'pom.xml'
               goals: 'verify sonar:sonar'
               options: >
                 -Dsonar.projectKey=$(SONAR_PROJECT_KEY)
-                -Dsonar.organization=$(SONAR_ORGANIZATION)
-                -Dsonar.host.url=https://sonarcloud.io
+                -Dsonar.projectName=gestion-signalement
+                -Dsonar.projectVersion=$(Build.BuildNumber)
+                -Dsonar.host.url=$(SONAR_HOST_URL)
                 -Dsonar.login=$(SONAR_TOKEN)
                 -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
+                -Dsonar.java.source=1.8
               publishJUnitResults: false
               javaHomeOption: 'JDKVersion'
               jdkVersionOption: '1.8'
 
-          - task: SonarCloudPublish@1
-            displayName: 'Publier résultats SonarCloud'
-            inputs:
-              pollingTimeoutSec: '300'
-
   # ============================================================
-  # STAGE 3 : BUILD IMAGE DOCKER & PUSH ACR
+  # STAGE 3 : BUILD IMAGE DOCKER & PUSH Docker Hub
   #   Uniquement sur main ou develop
   # ============================================================
   - stage: DockerBuild
@@ -210,9 +198,11 @@ stages:
           eq(variables['Build.SourceBranch'], 'refs/heads/develop')
         )
       )
+    variables:
+      - group: dockerhub-config   # Groupe de variables contenant DOCKERHUB_USERNAME et DOCKERHUB_TOKEN
     jobs:
       - job: Docker
-        displayName: 'Build Docker et push vers ACR'
+        displayName: 'Build Docker et push vers Docker Hub'
         steps:
 
           - task: JavaToolInstaller@0
@@ -239,10 +229,10 @@ stages:
               jdkVersionOption: '1.8'
 
           - task: Docker@2
-            displayName: 'Build & Push image vers ACR'
+            displayName: 'Build & Push image vers Docker Hub'
             inputs:
-              containerRegistry: 'ACRServiceConnection'   # Connexion de service ACR dans Azure DevOps
-              repository: '$(IMAGE_NAME)'
+              containerRegistry: 'DockerHubServiceConnection'   # Connexion de service Docker Hub dans Azure DevOps
+              repository: '$(DOCKERHUB_REPOSITORY)'
               command: 'buildAndPush'
               Dockerfile: 'Dockerfile'
               buildContext: '.'
