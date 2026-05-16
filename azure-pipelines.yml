@@ -34,9 +34,6 @@ pool:
   vmImage: 'ubuntu-latest'
 
 stages:
-  # ============================================================
-  # STAGE 1 : BUILD & TESTS
-  # ============================================================
   - stage: Build
     displayName: 'Build & Tests'
     jobs:
