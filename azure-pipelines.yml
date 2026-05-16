@@ -102,6 +102,13 @@ stages:
               ArtifactName: 'jar-artifact'
               publishLocation: 'Container'
 
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publier manifests K8s'
+            inputs:
+              PathtoPublish: 'k8s'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
   # ============================================================
   # STAGE 2 : ANALYSE DE CODE STATIQUE
   # ============================================================

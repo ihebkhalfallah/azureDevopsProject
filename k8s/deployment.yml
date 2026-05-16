@@ -1,0 +1,94 @@
+---
+# ============================================================
+# Application - Deployment
+# IMAGE_TAG sera substitué par le pipeline CD (envsubst)
+# ============================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gestion-signalement
+  namespace: signalement
+  labels:
+    app: gestion-signalement
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: gestion-signalement
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: gestion-signalement
+    spec:
+      containers:
+        - name: gestion-signalement
+          image: ${DOCKERHUB_REPOSITORY}:${IMAGE_TAG}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_DATASOURCE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: datasource-url
+            - name: SPRING_DATASOURCE_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: datasource-username
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-secret
+                  key: datasource-password
+            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
+              value: "validate"
+            - name: SERVER_PORT
+              value: "8080"
+            - name: SPRING_PROFILES_ACTIVE
+              value: "${SPRING_PROFILE}"
+          readinessProbe:
+            httpGet:
+              path: /aec-api-rest/actuator/health
+              port: 8080
+            initialDelaySeconds: 45
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /aec-api-rest/actuator/health
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+# ============================================================
+# Application - Service (NodePort pour accès externe)
+# ============================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: gestion-signalement-service
+  namespace: signalement
+spec:
+  selector:
+    app: gestion-signalement
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 30080

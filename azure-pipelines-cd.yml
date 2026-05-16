@@ -1,15 +1,15 @@
 # ============================================================
 # Pipeline CD - gestion-signalement
-# Déploiement sur Azure App Service (Web App for Containers)
+# Déploiement sur Kubernetes (kubeadm - 2 VMs Azure)
 # Déclenchement : après succès du pipeline CI sur main ou develop
 # ============================================================
 
-trigger: none   # Déclenché uniquement par le pipeline CI (ressource ci-dessous)
+trigger: none
 
 resources:
   pipelines:
     - pipeline: ci-pipeline
-      source: 'gestion-signalement-CI'   # Nom du pipeline CI dans Azure DevOps
+      source: 'gestion-signalement-CI'
       trigger:
         branches:
           include:
@@ -18,14 +18,198 @@ resources:
 
 variables:
   # ---- Docker Hub ------------------------------------------
-  # DOCKERHUB_USERNAME défini dans le groupe de variables "dockerhub-config"
   DOCKERHUB_REPOSITORY: '$(DOCKERHUB_USERNAME)/gestion-signalement'
-  IMAGE_NAME: 'gestion-signalement'
-  # ---- Azure App Service -----------------------------------
-  AZURE_SUBSCRIPTION: 'AzureServiceConnection'  # Connexion de service Azure à créer
-  RESOURCE_GROUP: 'rg-gestion-signalement'
-  APP_SERVICE_NAME_STAGING: 'app-signalement-staging'
-  APP_SERVICE_NAME_PROD: 'app-signalement-prod'
+  IMAGE_TAG: '$(resources.pipeline.ci-pipeline.runID)'
+  # ---- Kubernetes ------------------------------------------
+  # KUBECONFIG_CONTENT : contenu du fichier ~/.kube/config du master
+  # → à stocker dans le groupe de variables "k8s-config" comme secret
+  K8S_NAMESPACE_STAGING: 'signalement-staging'
+  K8S_NAMESPACE_PROD: 'signalement'
+
+stages:
+
+  # ============================================================
+  # STAGE 1 : DÉPLOIEMENT EN STAGING (develop → staging)
+  # ============================================================
+  - stage: DeployStaging
+    displayName: 'Déploiement Staging (K8s)'
+    condition: eq(variables['resources.pipeline.ci-pipeline.sourceBranch'], 'refs/heads/develop')
+    variables:
+      - group: k8s-config        # contient KUBECONFIG_CONTENT (secret)
+      - group: dockerhub-config  # contient DOCKERHUB_USERNAME
+      - group: db-config-staging # contient DB_URL_STAGING, DB_USER_STAGING, DB_PASSWORD_STAGING
+      SPRING_PROFILE: 'staging'
+    jobs:
+      - deployment: DeployToStaging
+        displayName: 'Déployer sur K8s Staging'
+        environment: 'staging'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                - task: Bash@3
+                  displayName: 'Configurer kubectl'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      mkdir -p ~/.kube
+                      echo "$(KUBECONFIG_CONTENT)" > ~/.kube/config
+                      chmod 600 ~/.kube/config
+                      kubectl version --client
+
+                - task: Bash@3
+                  displayName: 'Créer namespace et secret DB (staging)'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      kubectl create namespace $(K8S_NAMESPACE_STAGING) --dry-run=client -o yaml | kubectl apply -f -
+
+                      kubectl create secret generic db-secret \
+                        --namespace=$(K8S_NAMESPACE_STAGING) \
+                        --from-literal=datasource-url="$(DB_URL_STAGING)" \
+                        --from-literal=datasource-username="$(DB_USER_STAGING)" \
+                        --from-literal=datasource-password="$(DB_PASSWORD_STAGING)" \
+                        --dry-run=client -o yaml | kubectl apply -f -
+
+                - task: Bash@3
+                  displayName: 'Déployer MySQL sur K8s (staging)'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      sed "s/namespace: signalement/namespace: $(K8S_NAMESPACE_STAGING)/g" \
+                        $(Pipeline.Workspace)/ci-pipeline/drop/k8s/mysql.yml | \
+                        kubectl apply -f -
+
+                      echo "Attente que MySQL soit ready..."
+                      kubectl rollout status deployment/mysql -n $(K8S_NAMESPACE_STAGING) --timeout=120s
+
+                - task: Bash@3
+                  displayName: 'Déployer application (staging)'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      export DOCKERHUB_REPOSITORY=$(DOCKERHUB_REPOSITORY)
+                      export IMAGE_TAG=$(IMAGE_TAG)
+                      export SPRING_PROFILE=$(SPRING_PROFILE)
+
+                      cat $(Pipeline.Workspace)/ci-pipeline/drop/k8s/deployment.yml | \
+                        envsubst | \
+                        sed "s/namespace: signalement/namespace: $(K8S_NAMESPACE_STAGING)/g" | \
+                        kubectl apply -f -
+
+                      kubectl rollout status deployment/gestion-signalement \
+                        -n $(K8S_NAMESPACE_STAGING) --timeout=180s
+
+                - task: Bash@3
+                  displayName: 'Smoke test staging'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+                      URL="http://${NODE_IP}:30080/aec-api-rest/actuator/health"
+                      echo "Test : $URL"
+                      for i in $(seq 1 10); do
+                        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+                        if [ "$STATUS" = "200" ]; then
+                          echo "Staging OK (HTTP 200)"
+                          exit 0
+                        fi
+                        echo "Tentative $i/10 - HTTP $STATUS"
+                        sleep 15
+                      done
+                      exit 1
+
+  # ============================================================
+  # STAGE 2 : DÉPLOIEMENT EN PRODUCTION (main → prod)
+  #           Requiert une approbation manuelle
+  # ============================================================
+  - stage: DeployProduction
+    displayName: 'Déploiement Production (K8s)'
+    condition: eq(variables['resources.pipeline.ci-pipeline.sourceBranch'], 'refs/heads/main')
+    variables:
+      - group: k8s-config       # contient KUBECONFIG_CONTENT (secret)
+      - group: dockerhub-config # contient DOCKERHUB_USERNAME
+      - group: db-config-prod   # contient DB_URL_PROD, DB_USER_PROD, DB_PASSWORD_PROD
+      SPRING_PROFILE: 'production'
+    jobs:
+      - deployment: DeployToProduction
+        displayName: 'Déployer sur K8s Production'
+        environment: 'production'   # Approbation manuelle configurée sur cet environnement
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                - task: Bash@3
+                  displayName: 'Configurer kubectl'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      mkdir -p ~/.kube
+                      echo "$(KUBECONFIG_CONTENT)" > ~/.kube/config
+                      chmod 600 ~/.kube/config
+                      kubectl version --client
+
+                - task: Bash@3
+                  displayName: 'Créer namespace et secret DB (production)'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      kubectl create namespace $(K8S_NAMESPACE_PROD) --dry-run=client -o yaml | kubectl apply -f -
+
+                      kubectl create secret generic db-secret \
+                        --namespace=$(K8S_NAMESPACE_PROD) \
+                        --from-literal=datasource-url="$(DB_URL_PROD)" \
+                        --from-literal=datasource-username="$(DB_USER_PROD)" \
+                        --from-literal=datasource-password="$(DB_PASSWORD_PROD)" \
+                        --dry-run=client -o yaml | kubectl apply -f -
+
+                - task: Bash@3
+                  displayName: 'Déployer MySQL sur K8s (production)'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      kubectl apply -f $(Pipeline.Workspace)/ci-pipeline/drop/k8s/mysql.yml
+                      kubectl rollout status deployment/mysql -n $(K8S_NAMESPACE_PROD) --timeout=120s
+
+                - task: Bash@3
+                  displayName: 'Rolling update application (production)'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      export DOCKERHUB_REPOSITORY=$(DOCKERHUB_REPOSITORY)
+                      export IMAGE_TAG=$(IMAGE_TAG)
+                      export SPRING_PROFILE=$(SPRING_PROFILE)
+
+                      cat $(Pipeline.Workspace)/ci-pipeline/drop/k8s/deployment.yml | \
+                        envsubst | kubectl apply -f -
+
+                      kubectl rollout status deployment/gestion-signalement \
+                        -n $(K8S_NAMESPACE_PROD) --timeout=300s
+
+                - task: Bash@3
+                  displayName: 'Smoke test production'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+                      URL="http://${NODE_IP}:30080/aec-api-rest/actuator/health"
+                      echo "Test : $URL"
+                      for i in $(seq 1 10); do
+                        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+                        if [ "$STATUS" = "200" ]; then
+                          echo "Production OK (HTTP 200)"
+                          exit 0
+                        fi
+                        echo "Tentative $i/10 - HTTP $STATUS"
+                        sleep 15
+                      done
+                      exit 1
 
 stages:
 
