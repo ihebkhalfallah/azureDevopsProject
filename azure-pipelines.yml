@@ -29,9 +29,6 @@ variables:
   DOCKERHUB_REPOSITORY: '$(DOCKERHUB_USERNAME)/gestion-signalement'
   IMAGE_NAME: 'gestion-signalement'
   IMAGE_TAG: '$(Build.BuildId)'
-  # ---- SonarQube ------------------------------------------
-  # Configurer les secrets dans le groupe de variables "sonar-config"
-  # SONAR_TOKEN, SONAR_HOST_URL, SONAR_PROJECT_KEY
 
 pool:
   vmImage: 'ubuntu-latest'
