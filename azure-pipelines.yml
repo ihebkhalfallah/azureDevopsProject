@@ -34,8 +34,7 @@ variables:
   # SONAR_TOKEN, SONAR_HOST_URL, SONAR_PROJECT_KEY
 
 pool:
-  name: default          # self-hosted pool — changer en 'Azure Pipelines' + vmImage si Microsoft-hosted
-  # vmImage: 'ubuntu-latest'   # décommenter pour revenir sur Microsoft-hosted
+  vmImage: 'ubuntu-latest'
 
 stages:
 
