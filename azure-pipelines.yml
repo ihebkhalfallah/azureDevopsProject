@@ -170,9 +170,11 @@ stages:
           - group: sonar-config   # Groupe de variables : SONAR_TOKEN, SONAR_HOST_URL, SONAR_PROJECT_KEY
         steps:
 
+          # sonar-maven-plugin 3.x requiert Java 17+
           - task: JavaToolInstaller@0
+            displayName: 'Installer JDK 17 (requis par sonar-maven-plugin)'
             inputs:
-              versionSpec: '8'
+              versionSpec: '17'
               jdkArchitectureOption: 'x64'
               jdkSourceOption: 'PreInstalled'
 
@@ -200,7 +202,7 @@ stages:
                 -Dsonar.java.source=1.8
               publishJUnitResults: false
               javaHomeOption: 'JDKVersion'
-              jdkVersionOption: '1.8'
+              jdkVersionOption: '1.17'
 
   # ============================================================
   # STAGE 3 : BUILD IMAGE DOCKER & PUSH Docker Hub
