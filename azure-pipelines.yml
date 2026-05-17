@@ -169,8 +169,6 @@ stages:
         variables:
           - group: sonar-config   # Groupe de variables : SONAR_TOKEN, SONAR_HOST_URL, SONAR_PROJECT_KEY
         steps:
-
-          # sonar-maven-plugin 3.x requiert Java 17+
           - task: JavaToolInstaller@0
             displayName: 'Installer JDK 17 (requis par sonar-maven-plugin)'
             inputs:
