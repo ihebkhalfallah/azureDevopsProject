@@ -1,0 +1,206 @@
+# ============================================================
+# Pipeline Infrastructure - gestion-signalement
+# Provisionne le cluster AKS (1 control plane + 2 workers) via Terraform
+# Déclenchement : MANUEL uniquement
+# ============================================================
+
+trigger: none
+pr: none
+
+# Paramètre pour choisir l'action (plan / apply / destroy)
+parameters:
+  - name: action
+    displayName: 'Action Terraform'
+    type: string
+    default: 'apply'
+    values:
+      - plan
+      - apply
+      - destroy
+
+variables:
+  - group: terraform-backend   # TF_BACKEND_RG, TF_BACKEND_SA (nom unique du storage account)
+  TF_VERSION: '1.8.5'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+
+  # ============================================================
+  # STAGE 1 : PLAN — toujours exécuté, montre les changements
+  # ============================================================
+  - stage: Plan
+    displayName: 'Terraform Plan'
+    jobs:
+      - job: TerraformPlan
+        displayName: 'Init + Validate + Plan'
+        steps:
+
+          - checkout: self
+
+          - script: |
+              wget -q "https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip" -O /tmp/terraform.zip
+              unzip -q /tmp/terraform.zip -d /tmp
+              sudo mv /tmp/terraform /usr/local/bin/
+              terraform version
+            displayName: 'Installer Terraform $(TF_VERSION)'
+
+          # Crée le storage account pour le state Terraform (opération idempotente)
+          - task: AzureCLI@2
+            displayName: 'Créer backend storage (idempotent)'
+            inputs:
+              azureSubscription: 'AzureServiceConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                az group create -n $(TF_BACKEND_RG) -l westeurope --output none 2>/dev/null || true
+                az storage account create \
+                  -n $(TF_BACKEND_SA) -g $(TF_BACKEND_RG) \
+                  --sku Standard_LRS --kind StorageV2 --output none 2>/dev/null || true
+                az storage container create \
+                  -n tfstate --account-name $(TF_BACKEND_SA) --output none 2>/dev/null || true
+                echo "Backend storage prêt : $(TF_BACKEND_SA)/tfstate"
+
+          - task: AzureCLI@2
+            displayName: 'Terraform Init + Validate + Plan'
+            inputs:
+              azureSubscription: 'AzureServiceConnection'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              addSpnToEnvironment: true
+              workingDirectory: 'terraform'
+              inlineScript: |
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_CLIENT_SECRET=$servicePrincipalKey
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                terraform init \
+                  -backend-config="resource_group_name=$(TF_BACKEND_RG)" \
+                  -backend-config="storage_account_name=$(TF_BACKEND_SA)" \
+                  -backend-config="container_name=tfstate" \
+                  -backend-config="key=gestion-signalement.tfstate"
+
+                terraform validate
+                echo ""
+                echo "##[section]Plan Terraform (aperçu des changements)"
+                terraform plan -no-color
+
+  # ============================================================
+  # STAGE 2 : APPLY — requiert approbation manuelle
+  # ============================================================
+  - stage: Apply
+    displayName: 'Terraform Apply (créer / mettre à jour AKS)'
+    dependsOn: Plan
+    condition: |
+      and(
+        succeeded(),
+        eq('${{ parameters.action }}', 'apply')
+      )
+    jobs:
+      - deployment: ApplyAKS
+        displayName: 'Créer / mettre à jour cluster AKS'
+        environment: 'infrastructure'   # ← configurer l'approbation manuelle ici dans Azure DevOps
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                - checkout: self
+
+                - script: |
+                    wget -q "https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip" -O /tmp/terraform.zip
+                    unzip -q /tmp/terraform.zip -d /tmp
+                    sudo mv /tmp/terraform /usr/local/bin/
+                  displayName: 'Installer Terraform $(TF_VERSION)'
+
+                - task: AzureCLI@2
+                  displayName: 'Terraform Init + Apply'
+                  inputs:
+                    azureSubscription: 'AzureServiceConnection'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    addSpnToEnvironment: true
+                    workingDirectory: 'terraform'
+                    inlineScript: |
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_CLIENT_SECRET=$servicePrincipalKey
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                      terraform init \
+                        -backend-config="resource_group_name=$(TF_BACKEND_RG)" \
+                        -backend-config="storage_account_name=$(TF_BACKEND_SA)" \
+                        -backend-config="container_name=tfstate" \
+                        -backend-config="key=gestion-signalement.tfstate"
+
+                      terraform apply -auto-approve
+
+                - task: AzureCLI@2
+                  displayName: 'Afficher infos cluster AKS créé'
+                  inputs:
+                    azureSubscription: 'AzureServiceConnection'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    workingDirectory: 'terraform'
+                    inlineScript: |
+                      RG=$(terraform output -raw resource_group_name)
+                      CLUSTER=$(terraform output -raw cluster_name)
+                      echo "##[section]Cluster AKS prêt"
+                      echo "  Resource Group : $RG"
+                      echo "  Cluster Name   : $CLUSTER"
+                      echo ""
+                      echo "  Commande de connexion locale :"
+                      echo "  az aks get-credentials --resource-group $RG --name $CLUSTER"
+
+  # ============================================================
+  # STAGE 3 : DESTROY — déclenché uniquement si action=destroy
+  # ============================================================
+  - stage: Destroy
+    displayName: 'Terraform Destroy (supprimer AKS)'
+    dependsOn: []   # indépendant, ne dépend pas du stage Plan
+    condition: eq('${{ parameters.action }}', 'destroy')
+    jobs:
+      - deployment: DestroyAKS
+        displayName: 'Supprimer cluster AKS'
+        environment: 'infrastructure'   # ← approbation manuelle obligatoire avant destruction
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                - checkout: self
+
+                - script: |
+                    wget -q "https://releases.hashicorp.com/terraform/$(TF_VERSION)/terraform_$(TF_VERSION)_linux_amd64.zip" -O /tmp/terraform.zip
+                    unzip -q /tmp/terraform.zip -d /tmp
+                    sudo mv /tmp/terraform /usr/local/bin/
+                  displayName: 'Installer Terraform $(TF_VERSION)'
+
+                - task: AzureCLI@2
+                  displayName: 'Terraform Init + Destroy'
+                  inputs:
+                    azureSubscription: 'AzureServiceConnection'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    addSpnToEnvironment: true
+                    workingDirectory: 'terraform'
+                    inlineScript: |
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_CLIENT_SECRET=$servicePrincipalKey
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                      terraform init \
+                        -backend-config="resource_group_name=$(TF_BACKEND_RG)" \
+                        -backend-config="storage_account_name=$(TF_BACKEND_SA)" \
+                        -backend-config="container_name=tfstate" \
+                        -backend-config="key=gestion-signalement.tfstate"
+
+                      terraform destroy -auto-approve
+                      echo "##[warning]Cluster AKS détruit."

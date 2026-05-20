@@ -20,9 +20,8 @@ variables:
   # ---- Docker Hub ------------------------------------------
   DOCKERHUB_REPOSITORY: '$(DOCKERHUB_USERNAME)/gestion-signalement'
   IMAGE_TAG: '$(resources.pipeline.ci-pipeline.runID)'
-  # ---- Kubernetes ------------------------------------------
-  # KUBECONFIG_CONTENT : contenu du fichier ~/.kube/config du master
-  # → à stocker dans le groupe de variables "k8s-config" comme secret
+  # ---- Kubernetes / AKS -----------------------------------
+  # AKS_RESOURCE_GROUP et AKS_CLUSTER_NAME définis dans le groupe "aks-config"
   K8S_NAMESPACE_STAGING: 'signalement-staging'
   K8S_NAMESPACE_PROD: 'signalement'
 
@@ -35,7 +34,7 @@ stages:
     displayName: 'Déploiement Staging (K8s)'
     condition: eq(variables['resources.pipeline.ci-pipeline.sourceBranch'], 'refs/heads/develop')
     variables:
-      - group: k8s-config        # contient KUBECONFIG_CONTENT (secret)
+      - group: aks-config         # contient AKS_RESOURCE_GROUP, AKS_CLUSTER_NAME
       - group: dockerhub-config  # contient DOCKERHUB_USERNAME
       - group: db-config-staging # contient DB_URL_STAGING, DB_USER_STAGING, DB_PASSWORD_STAGING
       SPRING_PROFILE: 'staging'
@@ -50,14 +49,17 @@ stages:
             deploy:
               steps:
 
-                - task: Bash@3
-                  displayName: 'Configurer kubectl'
+                - task: AzureCLI@2
+                  displayName: 'Configurer kubectl (AKS)'
                   inputs:
-                    targetType: 'inline'
-                    script: |
-                      mkdir -p ~/.kube
-                      echo "$(KUBECONFIG_CONTENT)" > ~/.kube/config
-                      chmod 600 ~/.kube/config
+                    azureSubscription: 'AzureServiceConnection'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az aks get-credentials \
+                        --resource-group $(AKS_RESOURCE_GROUP) \
+                        --name $(AKS_CLUSTER_NAME) \
+                        --overwrite-existing
                       kubectl version --client
 
                 - task: Bash@3
@@ -130,7 +132,7 @@ stages:
     displayName: 'Déploiement Production (K8s)'
     condition: eq(variables['resources.pipeline.ci-pipeline.sourceBranch'], 'refs/heads/main')
     variables:
-      - group: k8s-config       # contient KUBECONFIG_CONTENT (secret)
+      - group: aks-config        # contient AKS_RESOURCE_GROUP, AKS_CLUSTER_NAME
       - group: dockerhub-config # contient DOCKERHUB_USERNAME
       - group: db-config-prod   # contient DB_URL_PROD, DB_USER_PROD, DB_PASSWORD_PROD
       SPRING_PROFILE: 'production'
@@ -145,14 +147,17 @@ stages:
             deploy:
               steps:
 
-                - task: Bash@3
-                  displayName: 'Configurer kubectl'
+                - task: AzureCLI@2
+                  displayName: 'Configurer kubectl (AKS)'
                   inputs:
-                    targetType: 'inline'
-                    script: |
-                      mkdir -p ~/.kube
-                      echo "$(KUBECONFIG_CONTENT)" > ~/.kube/config
-                      chmod 600 ~/.kube/config
+                    azureSubscription: 'AzureServiceConnection'
+                    scriptType: 'bash'
+                    scriptLocation: 'inlineScript'
+                    inlineScript: |
+                      az aks get-credentials \
+                        --resource-group $(AKS_RESOURCE_GROUP) \
+                        --name $(AKS_CLUSTER_NAME) \
+                        --overwrite-existing
                       kubectl version --client
 
                 - task: Bash@3
