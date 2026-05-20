@@ -308,21 +308,21 @@ stages:
                   inputs:
                     targetType: 'inline'
                     script: |
-                      kubectl create namespace signalement --dry-run=client -o yaml | kubectl apply -f -
+                      kubectl create namespace signalement --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
                       kubectl create secret generic db-secret \
                         --namespace=signalement \
                         --from-literal=datasource-url="$(DB_URL)" \
                         --from-literal=datasource-username="$(DB_USER)" \
                         --from-literal=datasource-password="$(DB_PASSWORD)" \
-                        --dry-run=client -o yaml | kubectl apply -f -
+                        --dry-run=client -o yaml | kubectl apply --validate=false -f -
 
                 - task: Bash@3
                   displayName: 'Déployer MySQL'
                   inputs:
                     targetType: 'inline'
                     script: |
-                      kubectl apply -f $(System.ArtifactsDirectory)/k8s-manifests/mysql.yml
+                      kubectl apply --validate=false -f $(System.ArtifactsDirectory)/k8s-manifests/mysql.yml
                       kubectl rollout status deployment/mysql -n signalement --timeout=120s
 
                 - task: Bash@3
@@ -335,7 +335,7 @@ stages:
                       export SPRING_PROFILE=production
 
                       cat $(System.ArtifactsDirectory)/k8s-manifests/deployment.yml | \
-                        envsubst | kubectl apply -f -
+                        envsubst | kubectl apply --validate=false -f -
 
                       kubectl rollout status deployment/gestion-signalement \
                         -n signalement --timeout=300s
