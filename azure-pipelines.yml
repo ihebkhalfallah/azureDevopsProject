@@ -102,13 +102,6 @@ stages:
               ArtifactName: 'jar-artifact'
               publishLocation: 'Container'
 
-          - task: PublishBuildArtifacts@1
-            displayName: 'Publier manifests K8s'
-            inputs:
-              PathtoPublish: 'k8s'
-              ArtifactName: 'drop'
-              publishLocation: 'Container'
-
   # ============================================================
   # STAGE 2 : ANALYSE DE CODE STATIQUE
   # ============================================================
@@ -250,7 +243,7 @@ stages:
           - task: Docker@2
             displayName: 'Build & Push image vers Docker Hub'
             inputs:
-              containerRegistry: 'DockerHubServiceConnection'   # Connexion de service Docker Hub dans Azure DevOps
+              containerRegistry: 'DockerHubServiceConnection'
               repository: '$(DOCKERHUB_REPOSITORY)'
               command: 'buildAndPush'
               Dockerfile: 'Dockerfile'
@@ -258,3 +251,110 @@ stages:
               tags: |
                 $(IMAGE_TAG)
                 latest
+
+          - task: PublishBuildArtifacts@1
+            displayName: 'Publier manifests K8s (pour deploy)'
+            inputs:
+              PathtoPublish: 'k8s'
+              ArtifactName: 'k8s-manifests'
+              publishLocation: 'Container'
+
+  # ============================================================
+  # STAGE 4 : DÉPLOIEMENT SUR AKS
+  #   Uniquement sur main, après DockerBuild
+  #   Nécessite : variable secrète KUBECONFIG_CONTENT dans le groupe "aks-config"
+  # ============================================================
+  - stage: Deploy
+    displayName: 'Déploiement sur AKS'
+    dependsOn: DockerBuild
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['Build.SourceBranch'], 'refs/heads/main')
+      )
+    variables:
+      - group: aks-config    # KUBECONFIG_CONTENT (secret), AKS_RESOURCE_GROUP, AKS_CLUSTER_NAME
+      - group: db-config     # DB_URL, DB_USER, DB_PASSWORD
+    jobs:
+      - deployment: DeployToAKS
+        displayName: 'Déployer sur AKS'
+        environment: 'production'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+
+                - task: DownloadBuildArtifacts@1
+                  displayName: 'Télécharger manifests K8s'
+                  inputs:
+                    buildType: 'current'
+                    artifactName: 'k8s-manifests'
+                    downloadPath: '$(System.ArtifactsDirectory)'
+
+                - task: Bash@3
+                  displayName: 'Configurer kubectl'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      mkdir -p ~/.kube
+                      echo "$(KUBECONFIG_CONTENT)" > ~/.kube/config
+                      chmod 600 ~/.kube/config
+                      kubectl version --client
+
+                - task: Bash@3
+                  displayName: 'Créer namespace et secret DB'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      kubectl create namespace signalement --dry-run=client -o yaml | kubectl apply -f -
+
+                      kubectl create secret generic db-secret \
+                        --namespace=signalement \
+                        --from-literal=datasource-url="$(DB_URL)" \
+                        --from-literal=datasource-username="$(DB_USER)" \
+                        --from-literal=datasource-password="$(DB_PASSWORD)" \
+                        --dry-run=client -o yaml | kubectl apply -f -
+
+                - task: Bash@3
+                  displayName: 'Déployer MySQL'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      kubectl apply -f $(System.ArtifactsDirectory)/k8s-manifests/mysql.yml
+                      kubectl rollout status deployment/mysql -n signalement --timeout=120s
+
+                - task: Bash@3
+                  displayName: 'Déployer application'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      export DOCKERHUB_REPOSITORY=$(DOCKERHUB_REPOSITORY)
+                      export IMAGE_TAG=$(Build.BuildId)
+                      export SPRING_PROFILE=production
+
+                      cat $(System.ArtifactsDirectory)/k8s-manifests/deployment.yml | \
+                        envsubst | kubectl apply -f -
+
+                      kubectl rollout status deployment/gestion-signalement \
+                        -n signalement --timeout=300s
+
+                - task: Bash@3
+                  displayName: 'Smoke test'
+                  inputs:
+                    targetType: 'inline'
+                    script: |
+                      NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+                      URL="http://${NODE_IP}:30080/aec-api-rest/actuator/health"
+                      echo "Test : $URL"
+                      for i in $(seq 1 10); do
+                        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
+                        if [ "$STATUS" = "200" ]; then
+                          echo "Déploiement OK (HTTP 200)"
+                          exit 0
+                        fi
+                        echo "Tentative $i/10 - HTTP $STATUS"
+                        sleep 15
+                      done
+                      exit 1
