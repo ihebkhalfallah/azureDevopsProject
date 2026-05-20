@@ -299,7 +299,7 @@ stages:
                     targetType: 'inline'
                     script: |
                       mkdir -p ~/.kube
-                      echo "$(KUBECONFIG_CONTENT)" > ~/.kube/config
+                      echo "$(KUBECONFIG_CONTENT)" | base64 -d > ~/.kube/config
                       chmod 600 ~/.kube/config
                       kubectl version --client
 
