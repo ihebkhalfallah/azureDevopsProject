@@ -1,23 +1,20 @@
 # ============================================================
 # Pipeline CD - gestion-signalement
 # Deploiement sur AKS via kubectl
-# Declenchement : apres succes du pipeline CI sur main
+# Declenchement : MANUEL - lancer apres succes du pipeline CI
 # ============================================================
 
 trigger: none
 
-resources:
-  pipelines:
-    - pipeline: ci-pipeline
-      source: "gestion-signalement-CI"
-      trigger:
-        branches:
-          include:
-            - main
+parameters:
+  - name: imageTag
+    displayName: 'Tag de l image Docker (Build ID du pipeline CI)'
+    type: string
+    default: 'latest'
 
 variables:
   DOCKERHUB_REPOSITORY: "$(DOCKERHUB_USERNAME)/gestion-signalement"
-  IMAGE_TAG: "$(resources.pipeline.ci-pipeline.runID)"
+  IMAGE_TAG: "${{ parameters.imageTag }}"
   K8S_NAMESPACE: "signalement"
 
 stages:
