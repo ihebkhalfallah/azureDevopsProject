@@ -273,7 +273,8 @@ stages:
         eq(variables['Build.SourceBranch'], 'refs/heads/main')
       )
     variables:
-      - group: db-config     # DB_URL, DB_USER, DB_PASSWORD
+      - group: dockerhub-config  # DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+      - group: db-config         # DB_URL, DB_USER, DB_PASSWORD
     jobs:
       - deployment: DeployToLocalVM
         displayName: 'Déployer sur k3s (VM locale)'
@@ -339,8 +340,8 @@ stages:
                     targetType: 'inline'
                     script: |
                       export KUBECONFIG="$HOME/.kube/config"
-                      export DOCKERHUB_REPOSITORY=$(DOCKERHUB_REPOSITORY)
-                      export IMAGE_TAG=$(Build.BuildId)
+                      export DOCKERHUB_REPOSITORY="$(DOCKERHUB_USERNAME)/gestion-signalement"
+                      export IMAGE_TAG="$(Build.BuildId)"
                       export SPRING_PROFILE=production
 
                       cat $(System.ArtifactsDirectory)/k8s-manifests/deployment.yml | \
