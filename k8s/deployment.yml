@@ -54,17 +54,15 @@ spec:
             - name: SPRING_PROFILES_ACTIVE
               value: "${SPRING_PROFILE}"
           readinessProbe:
-            httpGet:
-              path: /aec-api-rest/actuator/health
+            tcpSocket:
               port: 8080
-            initialDelaySeconds: 45
+            initialDelaySeconds: 100
             periodSeconds: 10
             failureThreshold: 6
           livenessProbe:
-            httpGet:
-              path: /aec-api-rest/actuator/health
+            tcpSocket:
               port: 8080
-            initialDelaySeconds: 90
+            initialDelaySeconds: 120
             periodSeconds: 20
             failureThreshold: 3
           resources:

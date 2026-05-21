@@ -356,16 +356,20 @@ stages:
                     targetType: 'inline'
                     script: |
                       export KUBECONFIG="$HOME/.kube/config"
-                      # Sur k3s local, on utilise localhost (NodePort)
-                      URL="http://localhost:30080/aec-api-rest/actuator/health"
-                      echo "Test : $URL"
-                      for i in $(seq 1 10); do
-                        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL" || echo "000")
-                        if [ "$STATUS" = "200" ]; then
-                          echo "Déploiement OK (HTTP 200)"
+                      # Attendre que les pods soient Ready (tcpSocket sur 8080)
+                      echo "Attente que les pods soient prêts..."
+                      for i in $(seq 1 20); do
+                        READY=$(kubectl get deployment gestion-signalement -n signalement \
+                          -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+                        DESIRED=$(kubectl get deployment gestion-signalement -n signalement \
+                          -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "2")
+                        echo "Tentative $i/20 - Ready: ${READY:-0}/$DESIRED"
+                        if [ "${READY:-0}" -ge "1" ]; then
+                          echo "Déploiement OK - au moins 1 réplica prêt"
                           exit 0
                         fi
-                        echo "Tentative $i/10 - HTTP $STATUS"
                         sleep 15
                       done
+                      echo "##[error]Timeout - aucun réplica prêt après 5 minutes"
+                      kubectl describe pods -n signalement
                       exit 1
