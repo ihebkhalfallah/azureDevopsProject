@@ -1,7 +1,5 @@
 ---
-# ============================================================
-# MySQL - PersistentVolumeClaim
-# ============================================================
+#PVC
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -15,9 +13,7 @@ spec:
       storage: 5Gi
 
 ---
-# ============================================================
-# MySQL - Deployment
-# ============================================================
+# sql deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -72,9 +68,7 @@ spec:
             claimName: mysql-pvc
 
 ---
-# ============================================================
-# MySQL - Service (ClusterIP, interne au cluster)
-# ============================================================
+# db service
 apiVersion: v1
 kind: Service
 metadata:
@@ -86,4 +80,4 @@ spec:
   ports:
     - port: 3306
       targetPort: 3306
-  clusterIP: None   # Headless service pour accès direct par nom DNS
+  clusterIP: None

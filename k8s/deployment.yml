@@ -1,8 +1,5 @@
 ---
-# ============================================================
-# Application - Deployment
-# IMAGE_TAG sera substitué par le pipeline CD (envsubst)
-# ============================================================
+# backend deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -74,9 +71,7 @@ spec:
               cpu: "500m"
 
 ---
-# ============================================================
-# Application - Service (NodePort pour accès externe)
-# ============================================================
+# backend service
 apiVersion: v1
 kind: Service
 metadata:
